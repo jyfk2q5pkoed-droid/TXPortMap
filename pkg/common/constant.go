@@ -65,6 +65,7 @@ const (
 	MQTT
 	MODBUS
 	ZOOKEEPER
+	GRPC
 )
 
 const (
@@ -118,6 +119,9 @@ var IdentificationProtocol = []string{
 	"cassandra#040000000500000001",
 	"couchdb#474554202f20485454502f312e300d0a0d0a",
 	"zookeeper#737461740a",
+	"grpc#505249202a20485454502f322e300d0a0d0a534d0d0a0d0a",
+	//"teamviewer#030101000000000000000000",
+	//"anydesk#010000000000000000000001",
 }
 
 // Top 100常见端口
@@ -185,6 +189,9 @@ var St_Identification_Port = []Identification_Port{
 	{"cassandra", 9042, 40},
 	{"couchdb", 5984, 41},
 	{"zookeeper", 2181, 42},
+	{"grpc", 50051, 43},
+	//{"teamviewer", 5938, 44},
+	//{"anydesk", 7070, 45},
 }
 
 // rdp_receive_packet

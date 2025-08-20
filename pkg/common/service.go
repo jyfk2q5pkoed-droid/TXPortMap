@@ -1009,12 +1009,15 @@ func ComparePackets(rcv []byte, rcvSize int, szBan *string, szSvcName *string) i
 		goto Return
 	}
 
-	if strings.Index(printBuf, "stat") == 0 {
-		dwRecognition = ZOOKEEPER
-		*szSvcName = "zookeeper"
+	if len(buf) >= 9 && buf[3] == 0x04 && bytes.Equal(buf[5:9], []byte{0x00, 0x00, 0x00, 0x00}) {
+		// 第四个字节 = 0x04 → SETTINGS 帧
+		// StreamID = 0 → HTTP/2 Preface 响应
+		dwRecognition = GRPC
+		*szSvcName = "grpc"
 		*szBan = printBuf
 		goto Return
 	}
+
 	// 判断是HTTP或者HTTPS,
 	// if bytes.Contains(bufUp, []byte("You're speaking plain HTTP to an SSL-enabled server port")) {
 	// 	dwRecognition = SSL_TLS
