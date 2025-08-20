@@ -442,7 +442,7 @@ func ScannerWithHandle(ip string, port uint64, handle func(*output.ResultEvent))
 			packet = st_Identification_Packet[i].Packet
 		}
 
-		dwSvc, resultEvent = SendIdentificationPacketFunction(packet, ip, port)
+		dwSvc, resultEvent = SendIdentificationPacketFunctionWithHandle(packet, ip, port)
 		if (dwSvc > UNKNOWN_PORT && dwSvc <= SOCKET_CONNECT_FAILED) || dwSvc == SOCKET_READ_TIMEOUT {
 			//Writer.Write(resultEvent)
 			handle(resultEvent)

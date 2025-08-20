@@ -46,12 +46,12 @@ func ComparePackets(rcv []byte, rcvSize int, szBan *string, szSvcName *string) i
 
 	var cFlag_MongoDB = []byte{0x4d, 0x09, 0x50, 0x00}
 	var cBit_MongoDB []byte
-	
-	if len(buf) <4 {
+
+	if len(buf) < 4 {
 		goto Return
 	}
-	
-	if rcvSize <4{
+
+	if rcvSize < 4 {
 		goto Return
 	}
 	if bytes.Equal(buf[:3], []byte("220")) {
@@ -159,22 +159,21 @@ func ComparePackets(rcv []byte, rcvSize int, szBan *string, szSvcName *string) i
 	}
 
 	// MYSQL  TODO::  默认使用了小端序，需要考虑大端序的情况
-		if rcvSize > 7 && buf[4] == 0xff && buf[0] == uint8(rcvSize-4) {
-			*szSvcName = "mysql"
-			//var uErr uint16
+	if rcvSize > 7 && buf[4] == 0xff && buf[0] == uint8(rcvSize-4) {
+		*szSvcName = "mysql"
+		//var uErr uint16
 
-			uErr := binary.LittleEndian.Uint16([]byte(buf[5:7]))
+		uErr := binary.LittleEndian.Uint16([]byte(buf[5:7]))
 
-			if uErr == 1129 {
-				*szBan = "BLOCKED"
-				dwRecognition = MySQL_BLOCKED
-			} else {
-				*szBan = "NOT ALLOWED"
-				dwRecognition = MySQL_NOT_ALLOWED
-			}
+		if uErr == 1129 {
+			*szBan = "BLOCKED"
+			dwRecognition = MySQL_BLOCKED
+		} else {
+			*szBan = "NOT ALLOWED"
+			dwRecognition = MySQL_NOT_ALLOWED
+		}
 
-			goto Return
-
+		goto Return
 
 	}
 
@@ -974,7 +973,48 @@ func ComparePackets(rcv []byte, rcvSize int, szBan *string, szSvcName *string) i
 
 		goto Return
 	}
+	// rabbitmq
+	if bytes.Contains(buf, os_Amqp_1) {
+		dwRecognition = RABBITMQ
+		*szSvcName = "rabbitmq"
+		*szBan = printBuf
+		goto Return
+	}
+	// kafka
+	if bytes.Contains(buf, os_Kafka_1) {
+		dwRecognition = KAFKA
+		*szSvcName = "kafka"
+		*szBan = printBuf
+		goto Return
+	}
 
+	// ActiveMQ
+	if strings.Index(printBuf, "CONNECT") == 0 {
+		dwRecognition = ACTIVEMQ
+		*szSvcName = "activemq"
+		*szBan = printBuf
+		goto Return
+	}
+
+	if bytes.Contains(buf, os_MQTT_1) {
+		dwRecognition = MQTT
+		*szSvcName = "mqtt"
+		*szBan = printBuf
+		goto Return
+	}
+	if bytes.Contains(buf, os_Modbus_1) {
+		dwRecognition = MODBUS
+		*szSvcName = "modbus"
+		*szBan = printBuf
+		goto Return
+	}
+
+	if strings.Index(printBuf, "stat") == 0 {
+		dwRecognition = ZOOKEEPER
+		*szSvcName = "zookeeper"
+		*szBan = printBuf
+		goto Return
+	}
 	// 判断是HTTP或者HTTPS,
 	// if bytes.Contains(bufUp, []byte("You're speaking plain HTTP to an SSL-enabled server port")) {
 	// 	dwRecognition = SSL_TLS

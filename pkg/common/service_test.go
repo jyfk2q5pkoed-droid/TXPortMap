@@ -39,9 +39,9 @@ func TestScan(t *testing.T) {
 	e := CreateEngine()
 	e.SetHandle(handle)
 	//en.TaskIps =
-	re, _ := rangectl.ParseIpv4Range("10.20.20.150")
+	re, _ := rangectl.ParseIpv4Range("69.197.129.156")
 	e.TaskIps = append(e.TaskIps, re)
-	p, _ := rangectl.ParsePortRange("3389")
+	p, _ := rangectl.ParsePortRange("9092")
 	e.TaskPorts = append(e.TaskPorts, p)
 	e.RunWithHandle()
 	e.Wg.Wait()
