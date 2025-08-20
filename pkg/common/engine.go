@@ -21,10 +21,11 @@ type Addr struct {
 	port uint64
 }
 
-type NBTScanIPMap struct{
+type NBTScanIPMap struct {
 	sync.Mutex
 	IPS map[string]struct{}
 }
+
 // type Range struct {
 // 	Begin uint64
 // 	End   uint64
@@ -32,7 +33,7 @@ type NBTScanIPMap struct{
 
 var (
 	Writer     output.Writer
-	NBTScanIPs = NBTScanIPMap{IPS:make(map[string]struct{})}
+	NBTScanIPs = NBTScanIPMap{IPS: make(map[string]struct{})}
 )
 
 type Engine struct {
@@ -42,6 +43,7 @@ type Engine struct {
 	ExcdIps     []rc.Range // 待排除的Ip
 	RandomFlag  bool
 	WorkerCount int
+	Handle      func(event *output.ResultEvent)
 	TaskChan    chan Addr // 传递待扫描的ip端口对
 	//DoneChan chan struct{}  // 任务完成通知
 	Wg *sync.WaitGroup
@@ -102,6 +104,48 @@ func (e *Engine) Run() {
 	close(e.TaskChan)
 }
 
+func (e *Engine) SetHandle(handle func(event *output.ResultEvent)) {
+	e.Handle = handle
+}
+
+// 扫描目标建立，ip:port发送到任务通道
+func (e *Engine) RunWithHandle() {
+	var addr Addr
+	e.Wg.Add(e.WorkerCount)
+	go e.SchedulerWithHandle()
+
+	// fmt.Println(e.TaskPorts)
+
+	// TODO:: if !e.RandomFlag
+	if !e.RandomFlag {
+		// 随机扫描，向任务通道随机发送addr
+		e.randomScan()
+
+	} else {
+		// 顺序扫描，向任务通道顺序发送addr
+		for _, ipnum := range e.TaskIps {
+			for ips := ipnum.Begin; ips <= ipnum.End; ips++ {
+				ip := ps.UnParseIPv4(ips)
+
+				for _, ports := range e.TaskPorts {
+					for port := ports.Begin; port <= ports.End; port++ {
+						addr.ip = ip
+						addr.port = port
+
+						//e.SubmitTask(addr)
+						//fmt.Println("ip:",ip,":port",port)
+						e.TaskChan <- addr
+					}
+				}
+			}
+		}
+	}
+
+	// 扫描任务发送完成，关闭通道
+	//fmt.Println("Task Add done")
+	close(e.TaskChan)
+}
+
 func (e *Engine) SubmitTask(addr Addr) {
 	//fmt.Printf("submit# %s:%d\n", addr.ip, addr.port)
 	go func() {
@@ -113,6 +157,13 @@ func (e *Engine) SubmitTask(addr Addr) {
 func (e *Engine) Scheduler() {
 	for i := 0; i < e.WorkerCount; i++ {
 		worker(e.TaskChan, e.Wg)
+	}
+}
+
+// 扫描任务创建
+func (e *Engine) SchedulerWithHandle() {
+	for i := 0; i < e.WorkerCount; i++ {
+		workerWithHandle(e.TaskChan, e.Wg, e.Handle)
 	}
 }
 
@@ -268,9 +319,9 @@ func (e *Engine) Parser() error {
 
 func CreateEngine() *Engine {
 
-	if limit > 1{
+	if limit > 1 {
 		Limiter = ratelimit.New(limit)
-	}else{
+	} else {
 		Limiter = ratelimit.NewUnlimited()
 	}
 
@@ -332,7 +383,7 @@ func scanner(ip string, port uint64) {
 				szOption = fmt.Sprintf("%s%s:%d\r\n\r\n", st_Identification_Packet[0].Packet, ip, port)
 			}
 			packet = []byte(szOption)
-		}else{
+		} else {
 			packet = st_Identification_Packet[i].Packet
 		}
 
@@ -346,19 +397,92 @@ func scanner(ip string, port uint64) {
 	Writer.Write(resultEvent)
 }
 
+func ScannerWithHandle(ip string, port uint64, handle func(*output.ResultEvent)) {
+	var dwSvc int
+	var iRule = -1
+	var bIsIdentification = false
+	var resultEvent *output.ResultEvent
+	var packet []byte
+	//var iCntTimeOut = 0
+
+	// 端口开放状态，发送报文，获取响应
+	// 先判断端口是不是优先识别协议端口
+	for _, svc := range St_Identification_Port {
+		if port == svc.Port {
+			bIsIdentification = true
+			iRule = svc.Identification_RuleId
+			data := st_Identification_Packet[iRule].Packet
+
+			dwSvc, resultEvent = SendIdentificationPacketFunctionWithHandle(data, ip, port)
+			break
+		}
+	}
+	if (dwSvc > UNKNOWN_PORT && dwSvc <= SOCKET_CONNECT_FAILED) || dwSvc == SOCKET_READ_TIMEOUT {
+		//Writer.Write(resultEvent)
+		handle(resultEvent)
+		return
+	}
+
+	// 发送其他协议查询包
+	for i := 0; i < iPacketMask; i++ {
+		// 超时2次,不再识别
+		if bIsIdentification && iRule == i {
+			continue
+		}
+		if i == 0 {
+			// 说明是http，数据需要拼装一下
+			var szOption string
+			if port == 80 {
+				szOption = fmt.Sprintf("%s%s\r\n\r\n", st_Identification_Packet[0].Packet, ip)
+			} else {
+				szOption = fmt.Sprintf("%s%s:%d\r\n\r\n", st_Identification_Packet[0].Packet, ip, port)
+			}
+			packet = []byte(szOption)
+		} else {
+			packet = st_Identification_Packet[i].Packet
+		}
+
+		dwSvc, resultEvent = SendIdentificationPacketFunction(packet, ip, port)
+		if (dwSvc > UNKNOWN_PORT && dwSvc <= SOCKET_CONNECT_FAILED) || dwSvc == SOCKET_READ_TIMEOUT {
+			//Writer.Write(resultEvent)
+			handle(resultEvent)
+			return
+		}
+	}
+	// 没有识别到服务，也要输出当前开放端口状态
+	//Writer.Write(resultEvent)
+	handle(resultEvent)
+}
+
 func worker(res chan Addr, wg *sync.WaitGroup) {
 	go func() {
 		defer wg.Done()
 
-
 		for addr := range res {
 			//do netbios stat scan
-			if nbtscan && NBTScanIPs.HasIP(addr.ip) == false{
+			if nbtscan && NBTScanIPs.HasIP(addr.ip) == false {
 				NBTScanIPs.SetIP(addr.ip)
 				nbtscaner(addr.ip)
 			}
 			Limiter.Take()
 			scanner(addr.ip, addr.port)
+		}
+
+	}()
+}
+
+func workerWithHandle(res chan Addr, wg *sync.WaitGroup, handle func(*output.ResultEvent)) {
+	go func() {
+		defer wg.Done()
+
+		for addr := range res {
+			//do netbios stat scan
+			if nbtscan && NBTScanIPs.HasIP(addr.ip) == false {
+				NBTScanIPs.SetIP(addr.ip)
+				nbtscaner(addr.ip)
+			}
+			Limiter.Take()
+			ScannerWithHandle(addr.ip, addr.port, handle)
 		}
 
 	}()
@@ -373,10 +497,11 @@ func SendIdentificationPacketFunction(data []byte, ip string, port uint64) (int,
 
 	//fmt.Println(addr)
 	var dwSvc int = UNKNOWN_PORT
-	conn, err := net.DialTimeout("tcp", addr, time.Duration(tout * 1000) * time.Millisecond)
+	conn, err := net.DialTimeout("tcp", addr, time.Duration(tout*1000)*time.Millisecond)
 	if err != nil {
 		// 端口是closed状态
 		Writer.Request(ip, conversion.ToString(port), "tcp", fmt.Errorf("time out"))
+		//fmt.Printf("ERROR:%s:%s %s %v", ip, conversion.ToString(port), "tcp", fmt.Errorf("time out"))
 		return SOCKET_CONNECT_FAILED, nil
 	}
 
@@ -387,6 +512,7 @@ func SendIdentificationPacketFunction(data []byte, ip string, port uint64) (int,
 	if _, err := conn.Write(data); err != nil {
 		// 端口是开放的
 		Writer.Request(ip, conversion.ToString(port), "tcp", err)
+		//fmt.Printf("ERROR: %s:%s %s %v", ip, conversion.ToString(port), "tcp", err)
 		return dwSvc, even
 	}
 
@@ -428,6 +554,104 @@ func SendIdentificationPacketFunction(data []byte, ip string, port uint64) (int,
 		}
 	}
 	Writer.Request(ip, conversion.ToString(port), "tcp", err)
+	//fmt.Printf("ERROR: %s:%s %s %v", ip, conversion.ToString(port), "tcp", err)
+	// 服务识别
+	if num > 0 {
+		dwSvc = ComparePackets(fingerprint, num, &szBan, &szSvcName)
+		//if len(szBan) > 15 {
+		//	szBan = szBan[:15]
+		//}
+		if dwSvc > UNKNOWN_PORT && dwSvc < SOCKET_CONNECT_FAILED {
+			//even.WorkingEvent = "found"
+			if szSvcName == "ssl/tls" || szSvcName == "http" {
+				rst := Ghttp.GetHttpTitle(ip, Ghttp.HTTPorHTTPS, int(port))
+				even.WorkingEvent = rst
+				cert, err0 := Ghttp.GetCert(ip, int(port))
+				if err0 != nil {
+					cert = ""
+				}
+				even.Info.Cert = cert
+			} else {
+				even.Info.Banner = strings.TrimSpace(szBan)
+			}
+			even.Info.Service = szSvcName
+			even.Time = time.Now()
+			// fmt.Printf("Discovered open port\t%d\ton\t%s\t\t%s\t\t%s\n", port, ip, szSvcName, strings.TrimSpace(szBan))
+			//Writer.Write(even)
+			//return dwSvc, even
+		}
+	}
+
+	return dwSvc, even
+}
+
+func SendIdentificationPacketFunctionWithHandle(data []byte, ip string, port uint64) (int, *output.ResultEvent) {
+	addr := fmt.Sprintf("%s:%d", ip, port)
+	even := &output.ResultEvent{
+		Target: addr,
+		Info:   &output.Info{},
+	}
+
+	//fmt.Println(addr)
+	var dwSvc int = UNKNOWN_PORT
+	conn, err := net.DialTimeout("tcp", addr, time.Duration(tout*1000)*time.Millisecond)
+	if err != nil {
+		// 端口是closed状态
+		//Writer.Request(ip, conversion.ToString(port), "tcp", fmt.Errorf("time out"))
+		fmt.Printf("ERROR:%s:%s %s %v", ip, conversion.ToString(port), "tcp", fmt.Errorf("time out"))
+		return SOCKET_CONNECT_FAILED, nil
+	}
+
+	defer conn.Close()
+
+	// Write方法是非阻塞的
+
+	if _, err := conn.Write(data); err != nil {
+		// 端口是开放的
+		//Writer.Request(ip, conversion.ToString(port), "tcp", err)
+		fmt.Printf("ERROR: %s:%s %s %v", ip, conversion.ToString(port), "tcp", err)
+		return dwSvc, even
+	}
+
+	// 直接开辟好空间，避免底层数组频繁申请内存
+	var fingerprint = make([]byte, 0, 65535)
+	var tmp = make([]byte, 256)
+	// 存储读取的字节数
+	var num int
+	var szBan string
+	var szSvcName string
+
+	// 这里设置成6秒是因为超时的时候会重新尝试5次，
+
+	readTimeout := 2 * time.Second
+
+	// 设置读取的超时时间为6s
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
+
+	for {
+		// Read是阻塞的
+		n, err := conn.Read(tmp)
+		if err != nil {
+			// 虽然数据读取错误，但是端口仍然是open的
+			// fmt.Println(err)
+			if err != io.EOF {
+				dwSvc = SOCKET_READ_TIMEOUT
+				// fmt.Printf("Discovered open port\t%d\ton\t%s\n", port, ip)
+			}
+			break
+		}
+
+		if n > 0 {
+			num += n
+			fingerprint = append(fingerprint, tmp[:n]...)
+		} else {
+			// 虽然没有读取到数据，但是端口仍然是open的
+			// fmt.Printf("Discovered open port\t%d\ton\t%s\n", port, ip)
+			break
+		}
+	}
+	//Writer.Request(ip, conversion.ToString(port), "tcp", err)
+	fmt.Printf("ERROR: %s:%s %s %v", ip, conversion.ToString(port), "tcp", err)
 	// 服务识别
 	if num > 0 {
 		dwSvc = ComparePackets(fingerprint, num, &szBan, &szSvcName)

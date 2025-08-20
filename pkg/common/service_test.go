@@ -1,6 +1,9 @@
 package common
 
 import (
+	ejson "encoding/json"
+	"github.com/4dogs-cn/TXPortMap/pkg/common/rangectl"
+	"github.com/4dogs-cn/TXPortMap/pkg/output"
 	"testing"
 )
 
@@ -20,4 +23,29 @@ func TestComparePacketsMysql(t *testing.T) {
 
 	t.Log(szBan)
 	t.Log(szSvcName)
+}
+
+func TestScan(t *testing.T) {
+	handle := func(event *output.ResultEvent) {
+		eventjs, _ := ejson.Marshal(event)
+		t.Log(string(eventjs))
+	}
+	//var err error
+	//Writer, err = output.NewStandardWriter(nocolor, json, rstfile, tracelog)
+	//if err != nil {
+	//	//return err
+	//}
+	//ScannerWithHandle("127.0.0.1", 3306, handle)
+	e := CreateEngine()
+	e.SetHandle(handle)
+	//en.TaskIps =
+	re, _ := rangectl.ParseIpv4Range("10.20.20.150")
+	e.TaskIps = append(e.TaskIps, re)
+	p, _ := rangectl.ParsePortRange("3389")
+	e.TaskPorts = append(e.TaskPorts, p)
+	e.RunWithHandle()
+	e.Wg.Wait()
+	//if Writer != nil {
+	//	Writer.Close()
+	//}
 }
